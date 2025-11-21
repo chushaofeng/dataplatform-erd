@@ -7,53 +7,61 @@
   <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
   <style>
     /* 全体のレイアウト設定 */
-    body {
+    html, body { 
+      height: 100%; 
+      margin: 0; 
+      padding: 0; 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; 
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      height: 100vh; /* 画面全体の高さ */
-      overflow: hidden;
+      overflow: hidden; /* スクロールバーを消す */
     }
-
+    
+    body {
+      display: flex; 
+      flex-direction: column; 
+    }
+    
     header {
-      background: #f6f8fa;
-      border-bottom: 1px solid #d0d7de;
+      background: #f6f8fa; 
+      border-bottom: 1px solid #d0d7de; 
       padding: 10px 20px;
-      display: flex;
-      align-items: center;
-      gap: 15px;
-      height: 50px;
-      flex-shrink: 0;
+      display: flex; 
+      align-items: center; 
+      gap: 15px; 
+      height: 50px; 
+      flex-shrink: 0; 
+      z-index: 10;
+    }
+    
+    select { 
+      padding: 5px; 
+      font-size: 14px; 
+      border-radius: 5px; 
+      border: 1px solid #ccc; 
+      min-width: 300px; 
     }
 
-    select {
-      padding: 5px;
-      font-size: 14px;
-      border-radius: 5px;
-      border: 1px solid #ccc;
-      min-width: 300px;
-    }
-
-    #diagram-container {
-      flex: 1; /* 残りの高さをすべて使う */
-      overflow: hidden;
-      position: relative;
-      background: #fff;
+    /* 描画エリアを画面いっぱいに */
+    #diagram-container { 
+      flex-grow: 1;
       width: 100%;
       height: 100%;
+      background: #fff;
+      position: relative;
+      overflow: hidden; 
     }
 
     #mermaid-output {
       width: 100%;
-      height: 100%; /* 親要素いっぱいに広げる */
-      display: block;
+      height: 100%;
     }
 
-    svg {
-      width: 100% !important;
-      height: 100% !important;
-      max-width: none !important; /* Mermaidの制限を解除 */
+    /* SVGに対する強制スタイル適用 */
+    svg { 
+      width: 100% !important; 
+      height: 100% !important; 
+      max-width: none !important; 
+      max-height: none !important;
+      display: block;
     }
 
     #status-msg { color: #666; font-size: 0.9em; margin-left: 10px; }
@@ -78,15 +86,21 @@
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 
   // ============================================================
-  // 設定
+  // 設定 (前回判明した値をセット済み)
   // ============================================================
   const REPO_USER = 'chushaofeng'; 
   const REPO_NAME = 'dataplatform-erd'; 
   // ============================================================
 
-  mermaid.initialize({ startOnLoad: false });
-  let panZoomInstance = null;
+  // Mermaidの設定：セキュリティレベルを下げてHTMLタグ許可、画面サイズ制限解除
+  mermaid.initialize({ 
+    startOnLoad: false,
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: false },
+    er: { useMaxWidth: false }
+  });
 
+  let panZoomInstance = null;
   const selector = document.getElementById('file-selector');
   const container = document.getElementById('mermaid-output');
   const statusMsg = document.getElementById('status-msg');
@@ -97,7 +111,7 @@
 
     try {
         const res = await fetch(apiUrl);
-        if (!res.ok) throw new Error(`API Error: ${res.status} (リポジトリが見つからないかアクセス権がありません)`);
+        if (!res.ok) throw new Error(`API Error: ${res.status}`);
         const data = await res.json();
 
         const mdFiles = data
@@ -124,7 +138,7 @@
 
     } catch (e) {
         console.error(e);
-        setStatus('ファイル一覧の取得に失敗しました: ' + e.message, true);
+        setStatus('ファイル一覧取得エラー: ' + e.message, true);
     }
   }
 
@@ -133,20 +147,23 @@
   });
 
   async function loadAndRender(filename) {
-    container.innerHTML = '';
+    container.innerHTML = ''; // クリア
     setStatus('レンダリング中...');
-    if (panZoomInstance) { panZoomInstance.destroy(); panZoomInstance = null; }
+    
+    // 既存のpanZoomインスタンスを破棄
+    if (panZoomInstance) { 
+      panZoomInstance.destroy(); 
+      panZoomInstance = null; 
+    }
 
     try {
-      // GitHubからRawデータを取得
       const fileUrl = `https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${filename}`;
       const response = await fetch(fileUrl);
       
       let text = "";
       if (!response.ok) {
-         // フォールバック：相対パスで試行
          const relativeResponse = await fetch(filename);
-         if (!relativeResponse.ok) throw new Error('ファイルを読み込めませんでした');
+         if (!relativeResponse.ok) throw new Error('ファイル読込失敗');
          text = await relativeResponse.text();
       } else {
          text = await response.text();
@@ -156,25 +173,35 @@
       if (!match) throw new Error('Mermaidコードが見つかりません');
       const code = match[1].trim();
 
+      // SVG生成
       const { svg } = await mermaid.render('mermaid-svg-' + Date.now(), code);
       container.innerHTML = svg;
       
-      // SVGのスタイルを強制的に設定（全画面表示のため）
+      // ▼▼▼ 重要な修正ポイント：SVGの属性を強制書き換え ▼▼▼
       const svgElement = container.querySelector('svg');
-      svgElement.style.width = "100%";
-      svgElement.style.height = "100%";
-      svgElement.style.maxWidth = "none";
       
-      // Pan/Zoom設定
+      // Mermaidが勝手につける固定サイズ(height/width/maxWidth)を削除
+      svgElement.removeAttribute('height');
+      svgElement.removeAttribute('width');
+      svgElement.style.maxWidth = 'none';
+      svgElement.style.height = '100%'; 
+      svgElement.style.width = '100%';
+      
+      // Pan/Zoomの初期化
       panZoomInstance = window.svgPanZoom(svgElement, {
         zoomEnabled: true, 
         controlIconsEnabled: true, 
         fit: true, 
         center: true, 
-        minZoom: 0.1, 
-        maxZoom: 50 // ズーム倍率を大きく設定
+        minZoom: 0.5,  // 最小ズーム倍率を制限（小さくなりすぎないように）
+        maxZoom: 50
       });
+      
+      // 初期表示で少しズームインさせる（小さすぎる場合の対策）
+      panZoomInstance.zoom(1.5); 
+      panZoomInstance.center();
 
+      // URL更新
       const newUrl = new URL(window.location);
       newUrl.searchParams.set('file', filename);
       window.history.pushState({}, '', newUrl);
