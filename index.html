@@ -5,29 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mermaid ER Viewer</title>
   <style>
-    body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     header {
       background: #f6f8fa; border-bottom: 1px solid #d0d7de; padding: 10px 20px;
       display: flex; align-items: center; gap: 15px; height: 50px; flex-shrink: 0;
     }
-    select { padding: 5px; font-size: 14px; border-radius: 5px; border: 1px solid #ccc; min-width: 200px; }
+    select { padding: 5px; font-size: 14px; border-radius: 5px; border: 1px solid #ccc; min-width: 300px; }
     #diagram-container { flex: 1; overflow: hidden; position: relative; background: #fff; }
     svg { width: 100%; height: 100%; }
-    #loading { display: none; color: #666; font-size: 0.9em; }
-    #error { color: red; display: none; font-size: 0.9em; }
+    #status-msg { color: #666; font-size: 0.9em; margin-left: 10px; }
+    .error { color: #cf222e !important; }
   </style>
 </head>
 <body>
 
 <header>
-  <strong>ER Diagram Viewer</strong>
+  <strong>ER Viewer</strong>
   <select id="file-selector">
-    <option value="">ファイルを選択してください</option>
-    <option value="lake__google_play_console__prod.md">Google Play Console (lake__google_play_console__prod.md)</option>
-    <option value="lake__netsuite__prod_2.md">NetSuite (lake__netsuite__prod_2.md)</option>
-    </select>
-  <span id="loading">Loading...</span>
-  <span id="error"></span>
+    <option value="">ファイル一覧を読み込み中...</option>
+  </select>
+  <span id="status-msg"></span>
 </header>
 
 <div id="diagram-container">
@@ -38,27 +35,81 @@
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
   import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/src/svg-pan-zoom.min.js';
 
+  // ============================================================
+  // 設定：ここが空の場合は、URLから自動検知を試みます
+  // うまくいかない場合は、あなたのユーザー名とリポジトリ名を入れてください
+  // 例: const REPO_USER = 'chushaofeng'; const REPO_NAME = 'dataplatform-erd';
+  // ============================================================
+  const REPO_USER = ''; 
+  const REPO_NAME = ''; 
+  // ============================================================
+
   mermaid.initialize({ startOnLoad: false });
   let panZoomInstance = null;
 
   const selector = document.getElementById('file-selector');
   const container = document.getElementById('mermaid-output');
-  const loading = document.getElementById('loading');
-  const errorMsg = document.getElementById('error');
+  const statusMsg = document.getElementById('status-msg');
 
-  // URLパラメータ (?file=xxx.md) があれば自動選択
-  const urlParams = new URLSearchParams(window.location.search);
-  const fileParam = urlParams.get('file');
-  if(fileParam) {
-    // セレクトボックスにないファイルでもURL指定があれば読み込むための処理
-    if (![...selector.options].some(opt => opt.value === fileParam)) {
-        const opt = document.createElement('option');
-        opt.value = fileParam;
-        opt.text = fileParam;
-        selector.add(opt);
+  // GitHub APIを使ってファイル一覧を取得する関数
+  async function fetchFileList() {
+    let user = REPO_USER;
+    let repo = REPO_NAME;
+
+    // 設定が空の場合、現在のURLからユーザー名とリポジトリ名を推測
+    if (!user || !repo) {
+        const pathParts = window.location.pathname.split('/').filter(p => p);
+        // github.ioのURL構造: https://[user].github.io/[repo]/
+        user = window.location.hostname.split('.')[0];
+        repo = pathParts[0];
     }
-    selector.value = fileParam;
-    loadAndRender(fileParam);
+
+    if (!user || !repo) {
+        setStatus('ユーザー名またはリポジトリ名が特定できませんでした。index.html内の設定を確認してください。', true);
+        return;
+    }
+
+    const apiUrl = `https://api.github.com/repos/${user}/${repo}/contents/`;
+
+    try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error(`API Error: ${res.status}`);
+        const data = await res.json();
+
+        // .mdファイルだけを抽出してソート
+        const mdFiles = data
+            .filter(item => item.type === 'file' && item.name.endsWith('.md') && item.name !== 'README.md')
+            .map(item => item.name)
+            .sort();
+
+        // セレクトボックスを更新
+        selector.innerHTML = '<option value="">ファイルを選択してください</option>';
+        mdFiles.forEach(fileName => {
+            const opt = document.createElement('option');
+            opt.value = fileName;
+            opt.textContent = fileName;
+            selector.appendChild(opt);
+        });
+
+        setStatus(`${mdFiles.length} 個のファイルをロードしました`);
+        
+        // URLパラメータがあれば自動選択
+        const urlParams = new URLSearchParams(window.location.search);
+        const fileParam = urlParams.get('file');
+        if (fileParam && mdFiles.includes(fileParam)) {
+            selector.value = fileParam;
+            loadAndRender(fileParam);
+        } else if (mdFiles.length > 0) {
+            // ファイル指定がなければ最初のファイルを開く（任意）
+            // selector.value = mdFiles[0];
+            // loadAndRender(mdFiles[0]);
+        }
+
+    } catch (e) {
+        console.error(e);
+        setStatus('ファイル一覧の取得に失敗しました (API制限の可能性あり)', true);
+        // 失敗時のフォールバックとして手動入力の余地を残すならここに記述
+    }
   }
 
   selector.addEventListener('change', (e) => {
@@ -67,26 +118,23 @@
 
   async function loadAndRender(filename) {
     container.innerHTML = '';
-    loading.style.display = 'inline';
-    errorMsg.style.display = 'none';
+    setStatus('レンダリング中...');
     if (panZoomInstance) { panZoomInstance.destroy(); panZoomInstance = null; }
 
     try {
-      // 1. MDファイルをフェッチ
       const response = await fetch(filename);
-      if (!response.ok) throw new Error(`ファイルを読み込めませんでした: ${response.statusText}`);
+      if (!response.ok) throw new Error(`Load Error: ${response.statusText}`);
       const text = await response.text();
 
-      // 2. Mermaidブロックを正規表現で抽出 (```mermaid ... ```)
+      // Mermaidコードブロックを抽出
       const match = text.match(/```mermaid([\s\S]*?)```/);
-      if (!match) throw new Error('Mermaidコードブロックが見つかりませんでした');
+      if (!match) throw new Error('Mermaidコードが見つかりません');
       const code = match[1].trim();
 
-      // 3. レンダリング
-      const { svg } = await mermaid.render('mermaid-svg', code);
+      const { svg } = await mermaid.render('mermaid-svg-' + Date.now(), code);
       container.innerHTML = svg;
       
-      // 4. Pan/Zoom有効化
+      // Pan/Zoom設定
       const svgElement = container.querySelector('svg');
       svgElement.style.width = "100%";
       svgElement.style.height = "100%";
@@ -95,19 +143,27 @@
         zoomEnabled: true, controlIconsEnabled: true, fit: true, center: true, minZoom: 0.1, maxZoom: 10
       });
 
-      // URLを更新（リロードしても同じファイルが開くように）
+      // URL更新
       const newUrl = new URL(window.location);
       newUrl.searchParams.set('file', filename);
       window.history.pushState({}, '', newUrl);
+      setStatus('');
 
     } catch (err) {
       console.error(err);
-      errorMsg.textContent = err.message;
-      errorMsg.style.display = 'inline';
-    } finally {
-      loading.style.display = 'none';
+      setStatus(err.message, true);
     }
   }
+
+  function setStatus(msg, isError = false) {
+      statusMsg.textContent = msg;
+      if (isError) statusMsg.classList.add('error');
+      else statusMsg.classList.remove('error');
+  }
+
+  // 初期化実行
+  fetchFileList();
+
 </script>
 <script src="https://bumbu.me/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
 </body>
