@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mermaid ER Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     header {
@@ -33,15 +34,12 @@
 
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/src/svg-pan-zoom.min.js';
 
   // ============================================================
-  // 設定：ここが空の場合は、URLから自動検知を試みます
-  // うまくいかない場合は、あなたのユーザー名とリポジトリ名を入れてください
-  // 例: const REPO_USER = 'chushaofeng'; const REPO_NAME = 'dataplatform-erd';
+  // 設定：画像から判明した情報を設定済みです
   // ============================================================
-  const REPO_USER = ''; 
-  const REPO_NAME = ''; 
+  const REPO_USER = 'chushaofeng'; 
+  const REPO_NAME = 'dataplatform-erd'; 
   // ============================================================
 
   mermaid.initialize({ startOnLoad: false });
@@ -53,27 +51,15 @@
 
   // GitHub APIを使ってファイル一覧を取得する関数
   async function fetchFileList() {
-    let user = REPO_USER;
-    let repo = REPO_NAME;
-
-    // 設定が空の場合、現在のURLからユーザー名とリポジトリ名を推測
-    if (!user || !repo) {
-        const pathParts = window.location.pathname.split('/').filter(p => p);
-        // github.ioのURL構造: https://[user].github.io/[repo]/
-        user = window.location.hostname.split('.')[0];
-        repo = pathParts[0];
-    }
-
-    if (!user || !repo) {
-        setStatus('ユーザー名またはリポジトリ名が特定できませんでした。index.html内の設定を確認してください。', true);
-        return;
-    }
-
+    const user = REPO_USER;
+    const repo = REPO_NAME;
+    
+    // API URL
     const apiUrl = `https://api.github.com/repos/${user}/${repo}/contents/`;
 
     try {
         const res = await fetch(apiUrl);
-        if (!res.ok) throw new Error(`API Error: ${res.status}`);
+        if (!res.ok) throw new Error(`API Error: ${res.status} (リポジトリが見つからないかアクセス権がありません)`);
         const data = await res.json();
 
         // .mdファイルだけを抽出してソート
@@ -99,16 +85,11 @@
         if (fileParam && mdFiles.includes(fileParam)) {
             selector.value = fileParam;
             loadAndRender(fileParam);
-        } else if (mdFiles.length > 0) {
-            // ファイル指定がなければ最初のファイルを開く（任意）
-            // selector.value = mdFiles[0];
-            // loadAndRender(mdFiles[0]);
         }
 
     } catch (e) {
         console.error(e);
-        setStatus('ファイル一覧の取得に失敗しました (API制限の可能性あり)', true);
-        // 失敗時のフォールバックとして手動入力の余地を残すならここに記述
+        setStatus('ファイル一覧の取得に失敗しました: ' + e.message, true);
     }
   }
 
@@ -122,9 +103,22 @@
     if (panZoomInstance) { panZoomInstance.destroy(); panZoomInstance = null; }
 
     try {
-      const response = await fetch(filename);
-      if (!response.ok) throw new Error(`Load Error: ${response.statusText}`);
-      const text = await response.text();
+      // 正しいURLパスを構築
+      // GitHub Pages上では相対パスでOKですが、確実性を高めるためリポジトリ構造に合わせます
+      const fileUrl = `https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${filename}`;
+      
+      // fetchで取得
+      const response = await fetch(fileUrl);
+      
+      // もしraw.githubusercontentでCORSエラーが出る場合、相対パスにフォールバック
+      let text = "";
+      if (!response.ok) {
+         const relativeResponse = await fetch(filename);
+         if (!relativeResponse.ok) throw new Error('ファイルを読み込めませんでした');
+         text = await relativeResponse.text();
+      } else {
+         text = await response.text();
+      }
 
       // Mermaidコードブロックを抽出
       const match = text.match(/```mermaid([\s\S]*?)```/);
@@ -139,7 +133,8 @@
       svgElement.style.width = "100%";
       svgElement.style.height = "100%";
       
-      panZoomInstance = svgPanZoom(svgElement, {
+      // グローバルに読み込まれた svgPanZoom を使用
+      panZoomInstance = window.svgPanZoom(svgElement, {
         zoomEnabled: true, controlIconsEnabled: true, fit: true, center: true, minZoom: 0.1, maxZoom: 10
       });
 
@@ -165,6 +160,5 @@
   fetchFileList();
 
 </script>
-<script src="https://bumbu.me/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
 </body>
 </html>
