@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mermaid ER Viewer</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header {
+      background: #f6f8fa; border-bottom: 1px solid #d0d7de; padding: 10px 20px;
+      display: flex; align-items: center; gap: 15px; height: 50px; flex-shrink: 0;
+    }
+    select { padding: 5px; font-size: 14px; border-radius: 5px; border: 1px solid #ccc; min-width: 200px; }
+    #diagram-container { flex: 1; overflow: hidden; position: relative; background: #fff; }
+    svg { width: 100%; height: 100%; }
+    #loading { display: none; color: #666; font-size: 0.9em; }
+    #error { color: red; display: none; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+
+<header>
+  <strong>ER Diagram Viewer</strong>
+  <select id="file-selector">
+    <option value="">ファイルを選択してください</option>
+    <option value="lake__google_play_console__prod.md">Google Play Console (lake__google_play_console__prod.md)</option>
+    <option value="lake__netsuite__prod_2.md">NetSuite (lake__netsuite__prod_2.md)</option>
+    </select>
+  <span id="loading">Loading...</span>
+  <span id="error"></span>
+</header>
+
+<div id="diagram-container">
+  <div id="mermaid-output"></div>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/src/svg-pan-zoom.min.js';
+
+  mermaid.initialize({ startOnLoad: false });
+  let panZoomInstance = null;
+
+  const selector = document.getElementById('file-selector');
+  const container = document.getElementById('mermaid-output');
+  const loading = document.getElementById('loading');
+  const errorMsg = document.getElementById('error');
+
+  // URLパラメータ (?file=xxx.md) があれば自動選択
+  const urlParams = new URLSearchParams(window.location.search);
+  const fileParam = urlParams.get('file');
+  if(fileParam) {
+    // セレクトボックスにないファイルでもURL指定があれば読み込むための処理
+    if (![...selector.options].some(opt => opt.value === fileParam)) {
+        const opt = document.createElement('option');
+        opt.value = fileParam;
+        opt.text = fileParam;
+        selector.add(opt);
+    }
+    selector.value = fileParam;
+    loadAndRender(fileParam);
+  }
+
+  selector.addEventListener('change', (e) => {
+    if(e.target.value) loadAndRender(e.target.value);
+  });
+
+  async function loadAndRender(filename) {
+    container.innerHTML = '';
+    loading.style.display = 'inline';
+    errorMsg.style.display = 'none';
+    if (panZoomInstance) { panZoomInstance.destroy(); panZoomInstance = null; }
+
+    try {
+      // 1. MDファイルをフェッチ
+      const response = await fetch(filename);
+      if (!response.ok) throw new Error(`ファイルを読み込めませんでした: ${response.statusText}`);
+      const text = await response.text();
+
+      // 2. Mermaidブロックを正規表現で抽出 (```mermaid ... ```)
+      const match = text.match(/```mermaid([\s\S]*?)```/);
+      if (!match) throw new Error('Mermaidコードブロックが見つかりませんでした');
+      const code = match[1].trim();
+
+      // 3. レンダリング
+      const { svg } = await mermaid.render('mermaid-svg', code);
+      container.innerHTML = svg;
+      
+      // 4. Pan/Zoom有効化
+      const svgElement = container.querySelector('svg');
+      svgElement.style.width = "100%";
+      svgElement.style.height = "100%";
+      
+      panZoomInstance = svgPanZoom(svgElement, {
+        zoomEnabled: true, controlIconsEnabled: true, fit: true, center: true, minZoom: 0.1, maxZoom: 10
+      });
+
+      // URLを更新（リロードしても同じファイルが開くように）
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('file', filename);
+      window.history.pushState({}, '', newUrl);
+
+    } catch (err) {
+      console.error(err);
+      errorMsg.textContent = err.message;
+      errorMsg.style.display = 'inline';
+    } finally {
+      loading.style.display = 'none';
+    }
+  }
+</script>
+<script src="https://bumbu.me/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
+</body>
+</html>
